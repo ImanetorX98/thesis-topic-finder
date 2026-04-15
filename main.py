@@ -10,6 +10,7 @@ from src.catalog import (
     build_markdown_report,
     build_topic_summary,
     extract_authorship_rows,
+    load_existing_keys,
     write_csv,
     write_json,
     write_sqlite,
@@ -144,6 +145,11 @@ def main() -> int:
         print("Avviso: --email non impostata. OpenAlex usa rate limit ridotto.", file=sys.stderr)
     target_countries = {c.upper() for c in args.countries}
     print(f"Paesi selezionati: {', '.join(sorted(target_countries))}")
+
+    existing_dois, existing_titles = load_existing_keys(args.db) if args.db else (set(), set())
+    if existing_dois or existing_titles:
+        print(f"DB esistente: {len(existing_dois)} DOI e {len(existing_titles)} titoli già indicizzati (verranno saltati).")
+
     all_articles: list[dict] = []
     all_rows: list[dict] = []
 
@@ -209,6 +215,17 @@ def main() -> int:
             articles.append(a)
 
         print(f"  - Totale dopo deduplica: {len(articles)} articoli")
+
+        if existing_dois or existing_titles:
+            before = len(articles)
+            articles = [
+                a for a in articles
+                if (a.get("doi") or "").strip().lower() not in existing_dois
+                and " ".join((a.get("title") or "").lower().split()) not in existing_titles
+            ]
+            skipped = before - len(articles)
+            if skipped:
+                print(f"  - {skipped} già nel DB, saltati")
 
         if args.journals:
             journals_lower = [j.lower() for j in args.journals]

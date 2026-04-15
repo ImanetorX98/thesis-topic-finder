@@ -8,6 +8,17 @@ from pathlib import Path
 from typing import Any
 
 
+def load_existing_keys(db_path: Path) -> tuple[set[str], set[str]]:
+    """Ritorna (dois, titles) già presenti nel DB. Sets vuoti se il DB non esiste."""
+    if not db_path.exists():
+        return set(), set()
+    con = sqlite3.connect(db_path)
+    dois = {row[0] for row in con.execute("SELECT doi FROM articles WHERE doi != ''") if row[0]}
+    titles = {row[0].lower().strip() for row in con.execute("SELECT title FROM articles WHERE title != ''") if row[0]}
+    con.close()
+    return dois, titles
+
+
 def extract_authorship_rows(
     topic: str,
     article: dict[str, Any],
@@ -82,12 +93,12 @@ def write_csv(path: Path, rows: list[dict[str, Any]], headers: list[str]) -> Non
 def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
     """Crea un database SQLite normalizzato da all_rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
+    db_exists = path.exists()
 
     con = sqlite3.connect(path)
     con.execute("PRAGMA journal_mode=WAL")
-    con.executescript("""
+    if not db_exists:
+        con.executescript("""
         CREATE TABLE articles (
             id          INTEGER PRIMARY KEY,
             topic       TEXT NOT NULL,
@@ -163,25 +174,26 @@ def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
                 (article_key_to_id[art_key], author_name_to_id[author], inst_id),
             )
 
-    # Vista piatta per query veloci
-    con.executescript("""
-        CREATE VIEW v_catalog AS
-        SELECT
-            a.topic,
-            a.source,
-            a.arxiv_id,
-            a.title,
-            a.doi,
-            a.published,
-            a.journal,
-            au.name        AS author,
-            i.name         AS university,
-            i.country_code AS country
-        FROM authorships AS s
-        JOIN articles     AS a  ON a.id  = s.article_id
-        JOIN authors      AS au ON au.id = s.author_id
-        LEFT JOIN institutions AS i ON i.id = s.institution_id;
-    """)
+    # Vista piatta per query veloci (solo se DB nuovo)
+    if not db_exists:
+        con.executescript("""
+            CREATE VIEW v_catalog AS
+            SELECT
+                a.topic,
+                a.source,
+                a.arxiv_id,
+                a.title,
+                a.doi,
+                a.published,
+                a.journal,
+                au.name        AS author,
+                i.name         AS university,
+                i.country_code AS country
+            FROM authorships AS s
+            JOIN articles     AS a  ON a.id  = s.article_id
+            JOIN authors      AS au ON au.id = s.author_id
+            LEFT JOIN institutions AS i ON i.id = s.institution_id;
+        """)
 
     con.commit()
     con.close()
