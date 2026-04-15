@@ -11,6 +11,8 @@ from typing import Any
 ARXIV_API = "http://export.arxiv.org/api/query"
 OPENALEX_WORKS = "https://api.openalex.org/works"
 S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
+NASA_ADS_SEARCH = "https://api.adsabs.harvard.edu/v1/search/query"
+INSPIRE_API = "https://inspirehep.net/api/literature"
 USER_AGENT = "thesis-topic-finder/1.0 (mailto:student@example.com)"  # sostituisci con email reale via --email
 
 
@@ -23,8 +25,11 @@ class APIError(RuntimeError):
     """Raised when an upstream API fails."""
 
 
-def _get_json(url: str, timeout: int = 30) -> dict[str, Any]:
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+def _get_json(url: str, timeout: int = 30, extra_headers: dict[str, str] | None = None) -> dict[str, Any]:
+    headers = {"User-Agent": USER_AGENT}
+    if extra_headers:
+        headers.update(extra_headers)
+    req = urllib.request.Request(url, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as response:
             raw = response.read().decode("utf-8")
@@ -174,6 +179,101 @@ def search_semanticscholar(topic: str, max_results: int = 25) -> list[dict[str, 
                 "arxiv_id": arxiv_id,
                 "title": paper.get("title") or "",
                 "summary": paper.get("abstract") or "",
+                "published": pub_date,
+                "updated": "",
+                "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
+                "pdf_url": "",
+                "doi": doi,
+                "authors_arxiv": [a for a in authors if a],
+                "journal": journal,
+            }
+        )
+    return results
+
+
+def search_nasa_ads(topic: str, max_results: int = 25, token: str = "") -> list[dict[str, Any]]:
+    if not token:
+        raise APIError("NASA ADS richiede un token API. Registrati su https://ui.adsabs.harvard.edu e aggiungi 'ads_token' nel config.json.")
+    params = urllib.parse.urlencode(
+        {
+            "q": topic,
+            "fl": "title,abstract,author,aff,doi,pubdate,bibcode,pub,identifier",
+            "rows": min(max_results, 2000),
+            "sort": "score desc",
+        }
+    )
+    data = _get_json(
+        f"{NASA_ADS_SEARCH}?{params}",
+        extra_headers={"Authorization": f"Bearer {token}"},
+    )
+    results: list[dict[str, Any]] = []
+    for doc in (data.get("response") or {}).get("docs") or []:
+        titles = doc.get("title") or []
+        title = titles[0] if titles else ""
+        dois = doc.get("doi") or []
+        doi = dois[0] if dois else ""
+        # Cerca arxiv_id negli identifier
+        arxiv_id = ""
+        for ident in (doc.get("identifier") or []):
+            if ident.lower().startswith("arxiv:"):
+                arxiv_id = ident[6:]
+                break
+        authors = doc.get("author") or []
+        pub_date = (doc.get("pubdate") or "")[:10]  # "YYYY-MM-DD"
+        results.append(
+            {
+                "source": "nasaads",
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "summary": doc.get("abstract") or "",
+                "published": pub_date,
+                "updated": "",
+                "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
+                "pdf_url": "",
+                "doi": doi,
+                "authors_arxiv": [a for a in authors if a],
+                "journal": doc.get("pub") or "",
+            }
+        )
+    return results
+
+
+def search_inspire(topic: str, max_results: int = 25) -> list[dict[str, Any]]:
+    params = urllib.parse.urlencode(
+        {
+            "sort": "mostrecent",
+            "size": min(max_results, 1000),
+            "page": 1,
+            "q": topic,
+            "fields": "titles,abstracts,authors,dois,arxiv_eprints,publication_info",
+        }
+    )
+    data = _get_json(f"{INSPIRE_API}?{params}")
+    results: list[dict[str, Any]] = []
+    for hit in (data.get("hits") or {}).get("hits") or []:
+        meta = hit.get("metadata") or {}
+        titles = meta.get("titles") or []
+        title = titles[0].get("value", "") if titles else ""
+        abstracts = meta.get("abstracts") or []
+        abstract = abstracts[0].get("value", "") if abstracts else ""
+        dois = meta.get("dois") or []
+        doi = dois[0].get("value", "") if dois else ""
+        eprints = meta.get("arxiv_eprints") or []
+        arxiv_id = eprints[0].get("value", "") if eprints else ""
+        authors = [
+            a.get("full_name", "")
+            for a in (meta.get("authors") or [])
+        ]
+        pub_info = (meta.get("publication_info") or [{}])[0]
+        journal = pub_info.get("journal_title") or ""
+        year = pub_info.get("year")
+        pub_date = f"{year}-01-01" if year else ""
+        results.append(
+            {
+                "source": "inspirehep",
+                "arxiv_id": arxiv_id,
+                "title": title,
+                "summary": abstract,
                 "published": pub_date,
                 "updated": "",
                 "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",

@@ -12,13 +12,16 @@
   "sources": [
     "arxiv",
     "openalex",
-    "semanticscholar"
+    "semanticscholar",
+    "inspirehep",
+    "nasaads"
   ],
+  "ads_token": null,
   "countries": [
     "CH"
   ],
   "max_results": 100,
-  "email": "your.email@example.com",
+  "email": "iman.rosignoli@gmail.com",
   "db": "data/thesis.db",
   "sleep": 0.25,
   "out_dir": "data",

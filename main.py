@@ -14,7 +14,7 @@ from src.catalog import (
     write_json,
     write_sqlite,
 )
-from src.fetchers import APIError, resolve_metadata, search_arxiv, search_openalex, search_semanticscholar, set_email
+from src.fetchers import APIError, resolve_metadata, search_arxiv, search_inspire, search_nasa_ads, search_openalex, search_semanticscholar, set_email
 
 
 def parse_args() -> argparse.Namespace:
@@ -112,9 +112,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--sources",
         nargs="+",
-        choices=["arxiv", "openalex", "semanticscholar"],
+        choices=["arxiv", "openalex", "semanticscholar", "nasaads", "inspirehep"],
         default=config_defaults.get("sources", ["arxiv"]),
-        help="Fonti da cui scaricare articoli (default: arxiv). Es: arxiv openalex semanticscholar.",
+        help="Fonti da cui scaricare articoli (default: arxiv).",
+    )
+    parser.add_argument(
+        "--ads-token",
+        type=str,
+        default=config_defaults.get("ads_token"),
+        help="Token API NASA ADS (necessario se usi --sources nasaads). Registrati su https://ui.adsabs.harvard.edu",
     )
     parser.add_argument(
         "--journals",
@@ -168,6 +174,22 @@ def main() -> int:
                 raw_articles.extend(found)
             except APIError as exc:
                 print(f"  Errore Semantic Scholar: {exc}", file=sys.stderr)
+
+        if "nasaads" in args.sources:
+            try:
+                found = search_nasa_ads(topic=topic, max_results=args.max_results, token=args.ads_token or "")
+                print(f"  NASA ADS: {len(found)} articoli")
+                raw_articles.extend(found)
+            except APIError as exc:
+                print(f"  Errore NASA ADS: {exc}", file=sys.stderr)
+
+        if "inspirehep" in args.sources:
+            try:
+                found = search_inspire(topic=topic, max_results=args.max_results)
+                print(f"  INSPIRE-HEP: {len(found)} articoli")
+                raw_articles.extend(found)
+            except APIError as exc:
+                print(f"  Errore INSPIRE-HEP: {exc}", file=sys.stderr)
 
         # Deduplica per DOI, poi per titolo normalizzato
         seen_dois: set[str] = set()
