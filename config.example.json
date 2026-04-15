@@ -21,6 +21,7 @@
     "CH"
   ],
   "max_results": 100,
+  "since": "2020",
   "email": "iman.rosignoli@gmail.com",
   "db": "data/thesis.db",
   "sleep": 0.25,

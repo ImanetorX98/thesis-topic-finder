@@ -118,6 +118,13 @@ def parse_args() -> argparse.Namespace:
         help="Fonti da cui scaricare articoli (default: arxiv).",
     )
     parser.add_argument(
+        "--since",
+        type=str,
+        default=config_defaults.get("since"),
+        metavar="ANNO",
+        help="Tieni solo articoli pubblicati a partire da questo anno (es: 2020).",
+    )
+    parser.add_argument(
         "--ads-token",
         type=str,
         default=config_defaults.get("ads_token"),
@@ -215,6 +222,14 @@ def main() -> int:
             articles.append(a)
 
         print(f"  - Totale dopo deduplica: {len(articles)} articoli")
+
+        if args.since:
+            before = len(articles)
+            articles = [
+                a for a in articles
+                if (a.get("published") or "")[:4] >= args.since[:4]
+            ]
+            print(f"  - Dopo filtro data (>= {args.since[:4]}): {len(articles)} articoli (rimossi {before - len(articles)})")
 
         if existing_dois or existing_titles:
             before = len(articles)
