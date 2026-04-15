@@ -227,15 +227,19 @@ def main() -> int:
             ]
             print(f"  - Dopo filtro abstract ({args.filter_mode} {args.filter_keywords}): {len(articles)} articoli")
 
+        no_match_count = 0
         for idx, article in enumerate(articles, start=1):
             print(f"[2/3] ({topic}) arricchimento OpenAlex {idx}/{len(articles)}", end="\r", flush=True)
-            try:
-                work = resolve_metadata(article, title_fallback=True)
-            except APIError:
+            if not article.get("title"):
+                no_match_count += 1
                 work = None
-
-            if work is None:
-                print(f"  Avviso: nessun match OpenAlex per '{article.get('title', '')[:60]}'", file=sys.stderr)
+            else:
+                try:
+                    work = resolve_metadata(article, title_fallback=True)
+                except APIError:
+                    work = None
+                if work is None:
+                    no_match_count += 1
 
             article_record = {
                 "topic": topic,
@@ -247,6 +251,8 @@ def main() -> int:
             time.sleep(args.sleep)
 
         print()
+        if no_match_count:
+            print(f"  - {no_match_count} articoli senza match OpenAlex (saltati nell'enrichment)", file=sys.stderr)
         report_text = build_markdown_report(topic, all_rows)
         report_path = args.report_dir / f"report_{topic.replace(' ', '_').lower()}.md"
         report_path.parent.mkdir(parents=True, exist_ok=True)
