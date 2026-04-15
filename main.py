@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -17,71 +18,94 @@ from src.fetchers import APIError, resolve_metadata, search_arxiv, search_openal
 
 
 def parse_args() -> argparse.Namespace:
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--config", type=Path, default=None)
+    pre_args, _ = pre_parser.parse_known_args()
+
+    config_defaults: dict = {}
+    if pre_args.config:
+        try:
+            config_raw = json.loads(pre_args.config.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            pre_parser.error(f"Impossibile leggere --config '{pre_args.config}': {exc}")
+        if not isinstance(config_raw, dict):
+            pre_parser.error(f"Il file --config '{pre_args.config}' deve contenere un oggetto JSON.")
+        config_defaults = dict(config_raw)
+        for key in ("out_dir", "report_dir", "db"):
+            if key in config_defaults and config_defaults[key] is not None:
+                config_defaults[key] = Path(config_defaults[key])
+
     parser = argparse.ArgumentParser(
         description=(
             "Scarica articoli da arXiv, arricchisce con OpenAlex e cataloga per topic, autore e universita."
         )
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=pre_args.config,
+        help="Percorso file JSON con valori di default per gli argomenti CLI.",
+    )
+    parser.add_argument(
         "--topics",
         nargs="+",
-        default=["numerical relativity"],
+        default=config_defaults.get("topics", ["numerical relativity"]),
         help="Uno o piu argomenti (default: numerical relativity).",
     )
     parser.add_argument(
         "--max-results",
         type=int,
-        default=30,
+        default=config_defaults.get("max_results", 30),
         help="Numero massimo di articoli arXiv per topic (default: 30).",
     )
     parser.add_argument(
         "--sleep",
         type=float,
-        default=0.25,
+        default=config_defaults.get("sleep", 0.25),
         help="Pausa in secondi tra chiamate API (default: 0.25).",
     )
     parser.add_argument(
         "--out-dir",
         type=Path,
-        default=Path("data"),
+        default=config_defaults.get("out_dir", Path("data")),
         help="Directory di output per CSV/JSON (default: data).",
     )
     parser.add_argument(
         "--report-dir",
         type=Path,
-        default=Path("reports"),
+        default=config_defaults.get("report_dir", Path("reports")),
         help="Directory dei report markdown (default: reports).",
     )
     parser.add_argument(
         "--email",
         type=str,
-        default=None,
+        default=config_defaults.get("email"),
         help="Email per OpenAlex polite pool (aumenta rate limit).",
     )
     parser.add_argument(
         "--filter-keywords",
         nargs="+",
-        default=None,
+        default=config_defaults.get("filter_keywords"),
         metavar="KW",
         help="Filtra articoli: tieni solo quelli che contengono queste keyword nell'abstract.",
     )
     parser.add_argument(
         "--filter-mode",
         choices=["any", "all"],
-        default="any",
+        default=config_defaults.get("filter_mode", "any"),
         help="'any': basta una keyword nell'abstract. 'all': devono esserci tutte (default: any).",
     )
     parser.add_argument(
         "--countries",
         nargs="+",
-        default=["CH"],
+        default=config_defaults.get("countries", ["CH"]),
         metavar="CC",
         help="Codici paese ISO da evidenziare (default: CH). Es: CH DE NL FR.",
     )
     parser.add_argument(
         "--db",
         type=Path,
-        default=None,
+        default=config_defaults.get("db"),
         metavar="FILE",
         help="Percorso database SQLite di output (es: data/thesis.db). Se omesso, non viene generato.",
     )
@@ -89,17 +113,17 @@ def parse_args() -> argparse.Namespace:
         "--sources",
         nargs="+",
         choices=["arxiv", "openalex", "semanticscholar"],
-        default=["arxiv"],
+        default=config_defaults.get("sources", ["arxiv"]),
         help="Fonti da cui scaricare articoli (default: arxiv). Es: arxiv openalex semanticscholar.",
     )
     parser.add_argument(
         "--journals",
-        nargs="+",
-        default=["all"],
+        nargs="*",
+        default=config_defaults.get("journals"),
         metavar="J",
         help=(
             "Filtra per rivista (substring, case-insensitive). "
-            "'all' = nessun filtro (default). "
+            "Se omesso = nessun filtro (tutte le riviste). "
             "Es: --journals 'Physical Review' 'Astrophysical' JCAP"
         ),
     )
@@ -164,7 +188,7 @@ def main() -> int:
 
         print(f"  - Totale dopo deduplica: {len(articles)} articoli")
 
-        if args.journals != ["all"]:
+        if args.journals:
             journals_lower = [j.lower() for j in args.journals]
             articles = [
                 a for a in articles

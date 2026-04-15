@@ -1,0 +1,29 @@
+{
+  "topics": [
+    "general relativity",
+    "black holes",
+    "gravitational waves",
+    "neutron stars",
+    "quantum gravity",
+    "cosmological perturbations",
+    "spacetime singularities",
+    "post-Newtonian approximation"
+  ],
+  "sources": [
+    "arxiv",
+    "openalex",
+    "semanticscholar"
+  ],
+  "countries": [
+    "CH"
+  ],
+  "max_results": 100,
+  "email": "your.email@example.com",
+  "db": "data/thesis.db",
+  "sleep": 0.25,
+  "out_dir": "data",
+  "report_dir": "reports",
+  "filter_keywords": null,
+  "filter_mode": "any",
+  "journals": null
+}
