@@ -11,6 +11,7 @@ from src.catalog import (
     extract_authorship_rows,
     write_csv,
     write_json,
+    write_sqlite,
 )
 from src.fetchers import APIError, resolve_metadata, search_arxiv, search_openalex, search_semanticscholar, set_email
 
@@ -76,6 +77,13 @@ def parse_args() -> argparse.Namespace:
         default=["CH"],
         metavar="CC",
         help="Codici paese ISO da evidenziare (default: CH). Es: CH DE NL FR.",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Percorso database SQLite di output (es: data/thesis.db). Se omesso, non viene generato.",
     )
     parser.add_argument(
         "--sources",
@@ -208,10 +216,15 @@ def main() -> int:
         ],
     )
 
+    if args.db:
+        write_sqlite(args.db, all_rows)
+
     print("\nOutput generati:")
     print(f"- {raw_json}")
     print(f"- {rows_csv}")
     print(f"- {summary_csv}")
+    if args.db:
+        print(f"- {args.db}")
     return 0
 
 

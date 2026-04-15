@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,111 @@ def write_csv(path: Path, rows: list[dict[str, Any]], headers: list[str]) -> Non
         writer.writeheader()
         for row in rows:
             writer.writerow(row)
+
+
+def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
+    """Crea un database SQLite normalizzato da all_rows."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()
+
+    con = sqlite3.connect(path)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.executescript("""
+        CREATE TABLE articles (
+            id          INTEGER PRIMARY KEY,
+            topic       TEXT NOT NULL,
+            source      TEXT,
+            arxiv_id    TEXT,
+            title       TEXT,
+            doi         TEXT,
+            published   TEXT
+        );
+        CREATE TABLE authors (
+            id   INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE
+        );
+        CREATE TABLE institutions (
+            id           INTEGER PRIMARY KEY,
+            name         TEXT NOT NULL,
+            country_code TEXT,
+            UNIQUE(name, country_code)
+        );
+        CREATE TABLE authorships (
+            article_id     INTEGER NOT NULL REFERENCES articles(id),
+            author_id      INTEGER NOT NULL REFERENCES authors(id),
+            institution_id INTEGER REFERENCES institutions(id)
+        );
+        CREATE INDEX idx_authorships_article ON authorships(article_id);
+        CREATE INDEX idx_authorships_author  ON authorships(author_id);
+        CREATE INDEX idx_authorships_inst    ON authorships(institution_id);
+    """)
+
+    # Deduplica articoli per (topic, doi, title)
+    article_key_to_id: dict[tuple[str, str, str], int] = {}
+    author_name_to_id: dict[str, int] = {}
+    inst_key_to_id: dict[tuple[str, str], int] = {}
+
+    for row in rows:
+        art_key = (row["topic"], row.get("doi", ""), row.get("title", ""))
+        if art_key not in article_key_to_id:
+            cur = con.execute(
+                "INSERT INTO articles(topic, source, arxiv_id, title, doi, published) VALUES (?,?,?,?,?,?)",
+                (row["topic"], row.get("source", ""), row.get("arxiv_id", ""),
+                 row.get("title", ""), row.get("doi", ""), row.get("published", "")),
+            )
+            article_key_to_id[art_key] = cur.lastrowid
+
+        author = row.get("author", "")
+        if author and author not in author_name_to_id:
+            cur = con.execute("INSERT OR IGNORE INTO authors(name) VALUES (?)", (author,))
+            con.execute("SELECT id FROM authors WHERE name=?", (author,))
+            author_name_to_id[author] = con.execute(
+                "SELECT id FROM authors WHERE name=?", (author,)
+            ).fetchone()[0]
+
+        uni = row.get("university", "")
+        country = row.get("country", "")
+        inst_id = None
+        if uni:
+            inst_key = (uni, country)
+            if inst_key not in inst_key_to_id:
+                con.execute(
+                    "INSERT OR IGNORE INTO institutions(name, country_code) VALUES (?,?)",
+                    (uni, country),
+                )
+                inst_key_to_id[inst_key] = con.execute(
+                    "SELECT id FROM institutions WHERE name=? AND country_code=?", (uni, country)
+                ).fetchone()[0]
+            inst_id = inst_key_to_id[inst_key]
+
+        if author:
+            con.execute(
+                "INSERT INTO authorships(article_id, author_id, institution_id) VALUES (?,?,?)",
+                (article_key_to_id[art_key], author_name_to_id[author], inst_id),
+            )
+
+    # Vista piatta per query veloci
+    con.executescript("""
+        CREATE VIEW v_catalog AS
+        SELECT
+            a.topic,
+            a.source,
+            a.arxiv_id,
+            a.title,
+            a.doi,
+            a.published,
+            au.name        AS author,
+            i.name         AS university,
+            i.country_code AS country
+        FROM authorships AS s
+        JOIN articles     AS a  ON a.id  = s.article_id
+        JOIN authors      AS au ON au.id = s.author_id
+        LEFT JOIN institutions AS i ON i.id = s.institution_id;
+    """)
+
+    con.commit()
+    con.close()
 
 
 def build_topic_summary(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
