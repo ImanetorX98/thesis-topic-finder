@@ -131,6 +131,13 @@ def parse_args() -> argparse.Namespace:
         help="Token API NASA ADS (necessario se usi --sources nasaads). Registrati su https://ui.adsabs.harvard.edu",
     )
     parser.add_argument(
+        "--from-json",
+        type=Path,
+        default=None,
+        metavar="FILE",
+        help="Salta il fetch e ricostruisce DB/CSV da un articles_enriched.json esistente.",
+    )
+    parser.add_argument(
         "--journals",
         nargs="*",
         default=config_defaults.get("journals"),
@@ -160,136 +167,145 @@ def main() -> int:
     all_articles: list[dict] = []
     all_rows: list[dict] = []
 
-    for topic in args.topics:
-        print(f"\n[1/3] Ricerca articoli per topic: {topic}")
-        raw_articles: list[dict] = []
+    if args.from_json:
+        print(f"Modalità --from-json: carico articoli da {args.from_json}")
+        all_articles = json.loads(args.from_json.read_text(encoding="utf-8"))
+        for record in all_articles:
+            all_rows.extend(extract_authorship_rows(
+                record["topic"], record["article"], record.get("openalex"), target_countries
+            ))
+        print(f"  {len(all_articles)} articoli caricati, {len(all_rows)} righe generate.")
+    else:
+        for topic in args.topics:
+            print(f"\n[1/3] Ricerca articoli per topic: {topic}")
+            raw_articles: list[dict] = []
 
-        if "arxiv" in args.sources:
-            try:
-                found = search_arxiv(topic=topic, max_results=args.max_results, sleep_s=args.sleep)
-                print(f"  arXiv: {len(found)} articoli")
-                raw_articles.extend(found)
-            except APIError as exc:
-                print(f"  Errore arXiv: {exc}", file=sys.stderr)
-
-        if "openalex" in args.sources:
-            try:
-                found = search_openalex(topic=topic, max_results=args.max_results)
-                print(f"  OpenAlex: {len(found)} articoli")
-                raw_articles.extend(found)
-            except APIError as exc:
-                print(f"  Errore OpenAlex: {exc}", file=sys.stderr)
-
-        if "semanticscholar" in args.sources:
-            try:
-                found = search_semanticscholar(topic=topic, max_results=args.max_results)
-                print(f"  Semantic Scholar: {len(found)} articoli")
-                raw_articles.extend(found)
-            except APIError as exc:
-                print(f"  Errore Semantic Scholar: {exc}", file=sys.stderr)
-
-        if "nasaads" in args.sources:
-            try:
-                found = search_nasa_ads(topic=topic, max_results=args.max_results, token=args.ads_token or "")
-                print(f"  NASA ADS: {len(found)} articoli")
-                raw_articles.extend(found)
-            except APIError as exc:
-                print(f"  Errore NASA ADS: {exc}", file=sys.stderr)
-
-        if "inspirehep" in args.sources:
-            try:
-                found = search_inspire(topic=topic, max_results=args.max_results)
-                print(f"  INSPIRE-HEP: {len(found)} articoli")
-                raw_articles.extend(found)
-            except APIError as exc:
-                print(f"  Errore INSPIRE-HEP: {exc}", file=sys.stderr)
-
-        # Deduplica per DOI, poi per titolo normalizzato
-        seen_dois: set[str] = set()
-        seen_titles: set[str] = set()
-        articles: list[dict] = []
-        for a in raw_articles:
-            doi = (a.get("doi") or "").strip().lower()
-            title_key = " ".join((a.get("title") or "").lower().split())
-            if doi and doi in seen_dois:
-                continue
-            if title_key and title_key in seen_titles:
-                continue
-            if doi:
-                seen_dois.add(doi)
-            if title_key:
-                seen_titles.add(title_key)
-            articles.append(a)
-
-        print(f"  - Totale dopo deduplica: {len(articles)} articoli")
-
-        if args.since:
-            before = len(articles)
-            articles = [
-                a for a in articles
-                if (a.get("published") or "")[:4] >= args.since[:4]
-            ]
-            print(f"  - Dopo filtro data (>= {args.since[:4]}): {len(articles)} articoli (rimossi {before - len(articles)})")
-
-        if existing_dois or existing_titles:
-            before = len(articles)
-            articles = [
-                a for a in articles
-                if (a.get("doi") or "").strip().lower() not in existing_dois
-                and " ".join((a.get("title") or "").lower().split()) not in existing_titles
-            ]
-            skipped = before - len(articles)
-            if skipped:
-                print(f"  - {skipped} già nel DB, saltati")
-
-        if args.journals:
-            journals_lower = [j.lower() for j in args.journals]
-            articles = [
-                a for a in articles
-                if any(j in (a.get("journal") or "").lower() for j in journals_lower)
-            ]
-            print(f"  - Dopo filtro riviste {args.journals}: {len(articles)} articoli")
-
-        if args.filter_keywords:
-            check = all if args.filter_mode == "all" else any
-            keywords_lower = [kw.lower() for kw in args.filter_keywords]
-            articles = [
-                a for a in articles
-                if check(kw in (a.get("summary") or "").lower() for kw in keywords_lower)
-            ]
-            print(f"  - Dopo filtro abstract ({args.filter_mode} {args.filter_keywords}): {len(articles)} articoli")
-
-        no_match_count = 0
-        for idx, article in enumerate(articles, start=1):
-            print(f"[2/3] ({topic}) arricchimento OpenAlex {idx}/{len(articles)}", end="\r", flush=True)
-            if not article.get("title"):
-                no_match_count += 1
-                work = None
-            else:
+            if "arxiv" in args.sources:
                 try:
-                    work = resolve_metadata(article, title_fallback=True)
-                except APIError:
-                    work = None
-                if work is None:
+                    found = search_arxiv(topic=topic, max_results=args.max_results, sleep_s=args.sleep)
+                    print(f"  arXiv: {len(found)} articoli")
+                    raw_articles.extend(found)
+                except APIError as exc:
+                    print(f"  Errore arXiv: {exc}", file=sys.stderr)
+
+            if "openalex" in args.sources:
+                try:
+                    found = search_openalex(topic=topic, max_results=args.max_results)
+                    print(f"  OpenAlex: {len(found)} articoli")
+                    raw_articles.extend(found)
+                except APIError as exc:
+                    print(f"  Errore OpenAlex: {exc}", file=sys.stderr)
+
+            if "semanticscholar" in args.sources:
+                try:
+                    found = search_semanticscholar(topic=topic, max_results=args.max_results)
+                    print(f"  Semantic Scholar: {len(found)} articoli")
+                    raw_articles.extend(found)
+                except APIError as exc:
+                    print(f"  Errore Semantic Scholar: {exc}", file=sys.stderr)
+
+            if "nasaads" in args.sources:
+                try:
+                    found = search_nasa_ads(topic=topic, max_results=args.max_results, token=args.ads_token or "")
+                    print(f"  NASA ADS: {len(found)} articoli")
+                    raw_articles.extend(found)
+                except APIError as exc:
+                    print(f"  Errore NASA ADS: {exc}", file=sys.stderr)
+
+            if "inspirehep" in args.sources:
+                try:
+                    found = search_inspire(topic=topic, max_results=args.max_results)
+                    print(f"  INSPIRE-HEP: {len(found)} articoli")
+                    raw_articles.extend(found)
+                except APIError as exc:
+                    print(f"  Errore INSPIRE-HEP: {exc}", file=sys.stderr)
+
+            # Deduplica per DOI, poi per titolo normalizzato
+            seen_dois: set[str] = set()
+            seen_titles: set[str] = set()
+            articles: list[dict] = []
+            for a in raw_articles:
+                doi = (a.get("doi") or "").strip().lower()
+                title_key = " ".join((a.get("title") or "").lower().split())
+                if doi and doi in seen_dois:
+                    continue
+                if title_key and title_key in seen_titles:
+                    continue
+                if doi:
+                    seen_dois.add(doi)
+                if title_key:
+                    seen_titles.add(title_key)
+                articles.append(a)
+
+            print(f"  - Totale dopo deduplica: {len(articles)} articoli")
+
+            if args.since:
+                before = len(articles)
+                articles = [
+                    a for a in articles
+                    if (a.get("published") or "")[:4] >= args.since[:4]
+                ]
+                print(f"  - Dopo filtro data (>= {args.since[:4]}): {len(articles)} articoli (rimossi {before - len(articles)})")
+
+            if existing_dois or existing_titles:
+                before = len(articles)
+                articles = [
+                    a for a in articles
+                    if (a.get("doi") or "").strip().lower() not in existing_dois
+                    and " ".join((a.get("title") or "").lower().split()) not in existing_titles
+                ]
+                skipped = before - len(articles)
+                if skipped:
+                    print(f"  - {skipped} già nel DB, saltati")
+
+            if args.journals:
+                journals_lower = [j.lower() for j in args.journals]
+                articles = [
+                    a for a in articles
+                    if any(j in (a.get("journal") or "").lower() for j in journals_lower)
+                ]
+                print(f"  - Dopo filtro riviste {args.journals}: {len(articles)} articoli")
+
+            if args.filter_keywords:
+                check = all if args.filter_mode == "all" else any
+                keywords_lower = [kw.lower() for kw in args.filter_keywords]
+                articles = [
+                    a for a in articles
+                    if check(kw in (a.get("summary") or "").lower() for kw in keywords_lower)
+                ]
+                print(f"  - Dopo filtro abstract ({args.filter_mode} {args.filter_keywords}): {len(articles)} articoli")
+
+            no_match_count = 0
+            for idx, article in enumerate(articles, start=1):
+                print(f"[2/3] ({topic}) arricchimento OpenAlex {idx}/{len(articles)}", end="\r", flush=True)
+                if not article.get("title"):
                     no_match_count += 1
+                    work = None
+                else:
+                    try:
+                        work = resolve_metadata(article, title_fallback=True)
+                    except APIError:
+                        work = None
+                    if work is None:
+                        no_match_count += 1
 
-            article_record = {
-                "topic": topic,
-                "article": article,
-                "openalex": work,
-            }
-            all_articles.append(article_record)
-            all_rows.extend(extract_authorship_rows(topic, article, work, target_countries))
-            time.sleep(args.sleep)
+                article_record = {
+                    "topic": topic,
+                    "article": article,
+                    "openalex": work,
+                }
+                all_articles.append(article_record)
+                all_rows.extend(extract_authorship_rows(topic, article, work, target_countries))
+                time.sleep(args.sleep)
 
-        print()
-        if no_match_count:
-            print(f"  - {no_match_count} articoli senza match OpenAlex (saltati nell'enrichment)", file=sys.stderr)
-        report_text = build_markdown_report(topic, all_rows)
-        report_path = args.report_dir / f"report_{topic.replace(' ', '_').lower()}.md"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(report_text, encoding="utf-8")
-        print(f"[3/3] Report topic salvato in: {report_path}")
+            print()
+            if no_match_count:
+                print(f"  - {no_match_count} articoli senza match OpenAlex (saltati nell'enrichment)", file=sys.stderr)
+            report_text = build_markdown_report(topic, all_rows)
+            report_path = args.report_dir / f"report_{topic.replace(' ', '_').lower()}.md"
+            report_path.parent.mkdir(parents=True, exist_ok=True)
+            report_path.write_text(report_text, encoding="utf-8")
+            print(f"[3/3] Report topic salvato in: {report_path}")
 
     if not all_articles:
         print("Nessun dato salvato.")
