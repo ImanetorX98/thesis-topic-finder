@@ -28,6 +28,7 @@ def extract_authorship_rows(
             rows.append(
                 {
                     "topic": topic,
+                    "source": article.get("source", ""),
                     "arxiv_id": article.get("arxiv_id", ""),
                     "title": work_title,
                     "doi": work_doi,
@@ -45,6 +46,7 @@ def extract_authorship_rows(
             rows.append(
                 {
                     "topic": topic,
+                    "source": article.get("source", ""),
                     "arxiv_id": article.get("arxiv_id", ""),
                     "title": work_title,
                     "doi": work_doi,

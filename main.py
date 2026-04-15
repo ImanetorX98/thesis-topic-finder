@@ -12,7 +12,7 @@ from src.catalog import (
     write_csv,
     write_json,
 )
-from src.fetchers import APIError, resolve_metadata, search_arxiv, set_email
+from src.fetchers import APIError, resolve_metadata, search_arxiv, search_openalex, search_semanticscholar, set_email
 
 
 def parse_args() -> argparse.Namespace:
@@ -77,6 +77,13 @@ def parse_args() -> argparse.Namespace:
         metavar="CC",
         help="Codici paese ISO da evidenziare (default: CH). Es: CH DE NL FR.",
     )
+    parser.add_argument(
+        "--sources",
+        nargs="+",
+        choices=["arxiv", "openalex", "semanticscholar"],
+        default=["arxiv"],
+        help="Fonti da cui scaricare articoli (default: arxiv). Es: arxiv openalex semanticscholar.",
+    )
     return parser.parse_args()
 
 
@@ -92,14 +99,51 @@ def main() -> int:
     all_rows: list[dict] = []
 
     for topic in args.topics:
-        print(f"\n[1/3] Download arXiv per topic: {topic}")
-        try:
-            articles = search_arxiv(topic=topic, max_results=args.max_results, sleep_s=args.sleep)
-        except APIError as exc:
-            print(f"Errore arXiv: {exc}", file=sys.stderr)
-            continue
+        print(f"\n[1/3] Ricerca articoli per topic: {topic}")
+        raw_articles: list[dict] = []
 
-        print(f"  - Trovati {len(articles)} articoli")
+        if "arxiv" in args.sources:
+            try:
+                found = search_arxiv(topic=topic, max_results=args.max_results, sleep_s=args.sleep)
+                print(f"  arXiv: {len(found)} articoli")
+                raw_articles.extend(found)
+            except APIError as exc:
+                print(f"  Errore arXiv: {exc}", file=sys.stderr)
+
+        if "openalex" in args.sources:
+            try:
+                found = search_openalex(topic=topic, max_results=args.max_results)
+                print(f"  OpenAlex: {len(found)} articoli")
+                raw_articles.extend(found)
+            except APIError as exc:
+                print(f"  Errore OpenAlex: {exc}", file=sys.stderr)
+
+        if "semanticscholar" in args.sources:
+            try:
+                found = search_semanticscholar(topic=topic, max_results=args.max_results)
+                print(f"  Semantic Scholar: {len(found)} articoli")
+                raw_articles.extend(found)
+            except APIError as exc:
+                print(f"  Errore Semantic Scholar: {exc}", file=sys.stderr)
+
+        # Deduplica per DOI, poi per titolo normalizzato
+        seen_dois: set[str] = set()
+        seen_titles: set[str] = set()
+        articles: list[dict] = []
+        for a in raw_articles:
+            doi = (a.get("doi") or "").strip().lower()
+            title_key = " ".join((a.get("title") or "").lower().split())
+            if doi and doi in seen_dois:
+                continue
+            if title_key and title_key in seen_titles:
+                continue
+            if doi:
+                seen_dois.add(doi)
+            if title_key:
+                seen_titles.add(title_key)
+            articles.append(a)
+
+        print(f"  - Totale dopo deduplica: {len(articles)} articoli")
 
         if args.filter_keywords:
             check = all if args.filter_mode == "all" else any
@@ -147,7 +191,7 @@ def main() -> int:
     write_csv(
         rows_csv,
         all_rows,
-        headers=["topic", "arxiv_id", "title", "doi", "published", "author", "university", "country", "is_target"],
+        headers=["topic", "source", "arxiv_id", "title", "doi", "published", "author", "university", "country", "is_target"],
     )
 
     summary_rows = build_topic_summary(all_rows)

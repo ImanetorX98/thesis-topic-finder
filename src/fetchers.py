@@ -10,6 +10,7 @@ from typing import Any
 
 ARXIV_API = "http://export.arxiv.org/api/query"
 OPENALEX_WORKS = "https://api.openalex.org/works"
+S2_SEARCH = "https://api.semanticscholar.org/graph/v1/paper/search"
 USER_AGENT = "thesis-topic-finder/1.0 (mailto:student@example.com)"  # sostituisci con email reale via --email
 
 
@@ -45,6 +46,19 @@ def _get_text(url: str, timeout: int = 30) -> str:
         raise APIError(f"Network error for URL: {url} ({exc.reason})") from exc
 
 
+def _reconstruct_abstract(inverted_index: dict[str, list[int]] | None) -> str:
+    """Ricostruisce l'abstract dall'indice invertito di OpenAlex."""
+    if not inverted_index:
+        return ""
+    positions: list[tuple[int, str]] = [
+        (pos, word)
+        for word, pos_list in inverted_index.items()
+        for pos in pos_list
+    ]
+    positions.sort()
+    return " ".join(word for _, word in positions)
+
+
 def search_arxiv(topic: str, max_results: int = 25, sleep_s: float = 0.0) -> list[dict[str, Any]]:
     query = urllib.parse.urlencode(
         {
@@ -77,6 +91,7 @@ def search_arxiv(topic: str, max_results: int = 25, sleep_s: float = 0.0) -> lis
 
         results.append(
             {
+                "source": "arxiv",
                 "arxiv_id": entry.findtext("atom:id", default="", namespaces=ns).rsplit("/", 1)[-1],
                 "title": " ".join((entry.findtext("atom:title", default="", namespaces=ns) or "").split()),
                 "summary": " ".join((entry.findtext("atom:summary", default="", namespaces=ns) or "").split()),
@@ -84,13 +99,83 @@ def search_arxiv(topic: str, max_results: int = 25, sleep_s: float = 0.0) -> lis
                 "updated": entry.findtext("atom:updated", default="", namespaces=ns),
                 "arxiv_url": entry.findtext("atom:id", default="", namespaces=ns),
                 "pdf_url": pdf_url,
-                "doi": doi.strip(),
+                "doi": doi.strip() if doi else "",
                 "authors_arxiv": [a for a in authors if a],
             }
         )
 
     if sleep_s > 0:
         time.sleep(sleep_s)
+    return results
+
+
+def search_openalex(topic: str, max_results: int = 25) -> list[dict[str, Any]]:
+    params = urllib.parse.urlencode(
+        {
+            "search": topic,
+            "per-page": min(max_results, 200),
+            "select": "id,display_name,doi,publication_year,authorships,abstract_inverted_index",
+        }
+    )
+    data = _get_json(f"{OPENALEX_WORKS}?{params}")
+
+    results: list[dict[str, Any]] = []
+    for work in data.get("results", []):
+        doi = (work.get("doi") or "").replace("https://doi.org/", "")
+        authors = [
+            (a.get("author") or {}).get("display_name", "")
+            for a in (work.get("authorships") or [])
+        ]
+        year = work.get("publication_year")
+        results.append(
+            {
+                "source": "openalex",
+                "arxiv_id": "",
+                "title": work.get("display_name") or "",
+                "summary": _reconstruct_abstract(work.get("abstract_inverted_index")),
+                "published": f"{year}-01-01" if year else "",
+                "updated": "",
+                "arxiv_url": "",
+                "pdf_url": "",
+                "doi": doi,
+                "authors_arxiv": [a for a in authors if a],
+                "_openalex_work": work,
+            }
+        )
+    return results
+
+
+def search_semanticscholar(topic: str, max_results: int = 25) -> list[dict[str, Any]]:
+    params = urllib.parse.urlencode(
+        {
+            "query": topic,
+            "limit": min(max_results, 100),
+            "fields": "title,abstract,authors,year,externalIds,publicationDate",
+        }
+    )
+    data = _get_json(f"{S2_SEARCH}?{params}")
+
+    results: list[dict[str, Any]] = []
+    for paper in data.get("data", []):
+        ext = paper.get("externalIds") or {}
+        doi = ext.get("DOI", "")
+        arxiv_id = ext.get("ArXiv", "")
+        authors = [a.get("name", "") for a in (paper.get("authors") or [])]
+        pub_date = paper.get("publicationDate") or (f"{paper.get('year')}-01-01" if paper.get("year") else "")
+        results.append(
+            {
+                "source": "semanticscholar",
+                "arxiv_id": arxiv_id,
+                "title": paper.get("title") or "",
+                "summary": paper.get("abstract") or "",
+                "published": pub_date,
+                "updated": "",
+                "arxiv_url": f"https://arxiv.org/abs/{arxiv_id}" if arxiv_id else "",
+                "pdf_url": "",
+                "doi": doi,
+                "authors_arxiv": [a for a in authors if a],
+            }
+        )
     return results
 
 
@@ -122,6 +207,10 @@ def search_openalex_by_title(title: str, per_page: int = 3) -> list[dict[str, An
 
 
 def resolve_metadata(article: dict[str, Any], title_fallback: bool = True) -> dict[str, Any] | None:
+    # Se l'articolo viene da OpenAlex, il work è già embedded — nessuna chiamata extra.
+    if article.get("_openalex_work"):
+        return article["_openalex_work"]
+
     by_doi = fetch_openalex_by_doi(article.get("doi", ""))
     if by_doi is not None:
         return by_doi
