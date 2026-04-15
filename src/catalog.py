@@ -153,8 +153,8 @@ def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
                 "SELECT id FROM authors WHERE name=?", (author,)
             ).fetchone()[0]
 
-        uni = row.get("university", "")
-        country = row.get("country", "")
+        uni = row.get("university") or ""
+        country = row.get("country") or ""
         inst_id = None
         if uni:
             inst_key = (uni, country)
