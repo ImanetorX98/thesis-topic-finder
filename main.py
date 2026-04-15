@@ -92,6 +92,17 @@ def parse_args() -> argparse.Namespace:
         default=["arxiv"],
         help="Fonti da cui scaricare articoli (default: arxiv). Es: arxiv openalex semanticscholar.",
     )
+    parser.add_argument(
+        "--journals",
+        nargs="+",
+        default=["all"],
+        metavar="J",
+        help=(
+            "Filtra per rivista (substring, case-insensitive). "
+            "'all' = nessun filtro (default). "
+            "Es: --journals 'Physical Review' 'Astrophysical' JCAP"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -153,6 +164,14 @@ def main() -> int:
 
         print(f"  - Totale dopo deduplica: {len(articles)} articoli")
 
+        if args.journals != ["all"]:
+            journals_lower = [j.lower() for j in args.journals]
+            articles = [
+                a for a in articles
+                if any(j in (a.get("journal") or "").lower() for j in journals_lower)
+            ]
+            print(f"  - Dopo filtro riviste {args.journals}: {len(articles)} articoli")
+
         if args.filter_keywords:
             check = all if args.filter_mode == "all" else any
             keywords_lower = [kw.lower() for kw in args.filter_keywords]
@@ -199,7 +218,7 @@ def main() -> int:
     write_csv(
         rows_csv,
         all_rows,
-        headers=["topic", "source", "arxiv_id", "title", "doi", "published", "author", "university", "country", "is_target"],
+        headers=["topic", "source", "arxiv_id", "title", "doi", "published", "journal", "author", "university", "country", "is_target"],
     )
 
     summary_rows = build_topic_summary(all_rows)

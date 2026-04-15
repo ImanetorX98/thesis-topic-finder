@@ -89,6 +89,7 @@ def search_arxiv(topic: str, max_results: int = 25, sleep_s: float = 0.0) -> lis
                 pdf_url = link.attrib.get("href", "")
                 break
 
+        journal_ref = entry.findtext("arxiv:journal_ref", default="", namespaces=ns) or ""
         results.append(
             {
                 "source": "arxiv",
@@ -101,6 +102,7 @@ def search_arxiv(topic: str, max_results: int = 25, sleep_s: float = 0.0) -> lis
                 "pdf_url": pdf_url,
                 "doi": doi.strip() if doi else "",
                 "authors_arxiv": [a for a in authors if a],
+                "journal": journal_ref.strip(),
             }
         )
 
@@ -114,7 +116,7 @@ def search_openalex(topic: str, max_results: int = 25) -> list[dict[str, Any]]:
         {
             "search": topic,
             "per-page": min(max_results, 200),
-            "select": "id,display_name,doi,publication_year,authorships,abstract_inverted_index",
+            "select": "id,display_name,doi,publication_year,authorships,abstract_inverted_index,primary_location",
         }
     )
     data = _get_json(f"{OPENALEX_WORKS}?{params}")
@@ -127,6 +129,8 @@ def search_openalex(topic: str, max_results: int = 25) -> list[dict[str, Any]]:
             for a in (work.get("authorships") or [])
         ]
         year = work.get("publication_year")
+        primary = work.get("primary_location") or {}
+        journal = ((primary.get("source") or {}).get("display_name") or "").strip()
         results.append(
             {
                 "source": "openalex",
@@ -139,6 +143,7 @@ def search_openalex(topic: str, max_results: int = 25) -> list[dict[str, Any]]:
                 "pdf_url": "",
                 "doi": doi,
                 "authors_arxiv": [a for a in authors if a],
+                "journal": journal,
                 "_openalex_work": work,
             }
         )
@@ -150,7 +155,7 @@ def search_semanticscholar(topic: str, max_results: int = 25) -> list[dict[str, 
         {
             "query": topic,
             "limit": min(max_results, 100),
-            "fields": "title,abstract,authors,year,externalIds,publicationDate",
+            "fields": "title,abstract,authors,year,externalIds,publicationDate,publicationVenue",
         }
     )
     data = _get_json(f"{S2_SEARCH}?{params}")
@@ -162,6 +167,7 @@ def search_semanticscholar(topic: str, max_results: int = 25) -> list[dict[str, 
         arxiv_id = ext.get("ArXiv", "")
         authors = [a.get("name", "") for a in (paper.get("authors") or [])]
         pub_date = paper.get("publicationDate") or (f"{paper.get('year')}-01-01" if paper.get("year") else "")
+        journal = ((paper.get("publicationVenue") or {}).get("name") or "").strip()
         results.append(
             {
                 "source": "semanticscholar",
@@ -174,6 +180,7 @@ def search_semanticscholar(topic: str, max_results: int = 25) -> list[dict[str, 
                 "pdf_url": "",
                 "doi": doi,
                 "authors_arxiv": [a for a in authors if a],
+                "journal": journal,
             }
         )
     return results

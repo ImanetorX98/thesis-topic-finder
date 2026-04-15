@@ -34,6 +34,7 @@ def extract_authorship_rows(
                     "title": work_title,
                     "doi": work_doi,
                     "published": article.get("published", ""),
+                    "journal": article.get("journal", ""),
                     "author": author_name,
                     "university": "",
                     "country": "",
@@ -52,6 +53,7 @@ def extract_authorship_rows(
                     "title": work_title,
                     "doi": work_doi,
                     "published": article.get("published", ""),
+                    "journal": article.get("journal", ""),
                     "author": author_name,
                     "university": inst.get("display_name", ""),
                     "country": country,
@@ -93,7 +95,8 @@ def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
             arxiv_id    TEXT,
             title       TEXT,
             doi         TEXT,
-            published   TEXT
+            published   TEXT,
+            journal     TEXT
         );
         CREATE TABLE authors (
             id   INTEGER PRIMARY KEY,
@@ -124,9 +127,10 @@ def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
         art_key = (row["topic"], row.get("doi", ""), row.get("title", ""))
         if art_key not in article_key_to_id:
             cur = con.execute(
-                "INSERT INTO articles(topic, source, arxiv_id, title, doi, published) VALUES (?,?,?,?,?,?)",
+                "INSERT INTO articles(topic, source, arxiv_id, title, doi, published, journal) VALUES (?,?,?,?,?,?,?)",
                 (row["topic"], row.get("source", ""), row.get("arxiv_id", ""),
-                 row.get("title", ""), row.get("doi", ""), row.get("published", "")),
+                 row.get("title", ""), row.get("doi", ""), row.get("published", ""),
+                 row.get("journal", "")),
             )
             article_key_to_id[art_key] = cur.lastrowid
 
@@ -169,6 +173,7 @@ def write_sqlite(path: Path, rows: list[dict[str, Any]]) -> None:
             a.title,
             a.doi,
             a.published,
+            a.journal,
             au.name        AS author,
             i.name         AS university,
             i.country_code AS country
